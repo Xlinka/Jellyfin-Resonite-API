@@ -69,88 +69,115 @@ router.get('/:itemId', ensureAuth, async (req, res) => {
     let isDirectPlay = false;
     let transcodeReasons = [];
 
-    // Determine streaming method
+    // Build base streaming parameters for Jellyfin
+    const baseParams = {
+      UserId: auth.userId,
+      DeviceId: 'jellyfin-resonite-api',
+      api_key: auth.token
+    };
+
+    // Determine streaming method and build URLs
     if (mediaSource.SupportsDirectPlay && quality === 'auto') {
       // Direct play - best quality, no transcoding
-      directUrl = `${process.env.JELLYFIN_SERVER}/Videos/${itemId}/stream?static=true&api_key=${auth.token}`;
-      hlsUrl = `${process.env.JELLYFIN_SERVER}/Videos/${itemId}/master.m3u8?api_key=${auth.token}`;
+      const directParams = new URLSearchParams({
+        ...baseParams,
+        Static: 'true'
+      });
+      
+      directUrl = `${process.env.JELLYFIN_SERVER}/Videos/${itemId}/stream?${directParams.toString()}`;
+      hlsUrl = `${process.env.JELLYFIN_SERVER}/Videos/${itemId}/master.m3u8?${directParams.toString()}`;
       streamUrl = directUrl;
       isDirectPlay = true;
     } else if (mediaSource.SupportsDirectStream) {
       // Direct stream - remux container only
-      directUrl = `${process.env.JELLYFIN_SERVER}/Videos/${itemId}/stream?` +
-        `Container=${container}&api_key=${auth.token}`;
-      hlsUrl = `${process.env.JELLYFIN_SERVER}/Videos/${itemId}/master.m3u8?Container=${container}&api_key=${auth.token}`;
+      const streamParams = new URLSearchParams({
+        ...baseParams,
+        Container: container
+      });
+      
+      directUrl = `${process.env.JELLYFIN_SERVER}/Videos/${itemId}/stream?${streamParams.toString()}`;
+      hlsUrl = `${process.env.JELLYFIN_SERVER}/Videos/${itemId}/master.m3u8?${streamParams.toString()}`;
       streamUrl = directUrl;
       transcodeReasons.push('Container remux');
     } else {
       // Full transcode required
-      const transcodeParams = new URLSearchParams({
+      const transcodeParams = {
+        ...baseParams,
         VideoCodec: videoCodec,
         AudioCodec: audioCodec,
         Container: container,
         MaxWidth: maxWidth,
         MaxHeight: maxHeight,
         VideoBitrate: videoBitrate,
-        AudioChannels: audioChannels,
-        api_key: auth.token
-      });
+        AudioChannels: audioChannels
+      };
 
       // Adjust quality preset
       switch (quality) {
         case 'low':
-          transcodeParams.set('MaxWidth', '720');
-          transcodeParams.set('MaxHeight', '480');
-          transcodeParams.set('VideoBitrate', '1000000');
+          transcodeParams.MaxWidth = '720';
+          transcodeParams.MaxHeight = '480';
+          transcodeParams.VideoBitrate = '1000000';
           break;
         case 'medium':
-          transcodeParams.set('MaxWidth', '1280');
-          transcodeParams.set('MaxHeight', '720');
-          transcodeParams.set('VideoBitrate', '2500000');
+          transcodeParams.MaxWidth = '1280';
+          transcodeParams.MaxHeight = '720';
+          transcodeParams.VideoBitrate = '2500000';
           break;
         case 'high':
-          transcodeParams.set('MaxWidth', '1920');
-          transcodeParams.set('MaxHeight', '1080');
-          transcodeParams.set('VideoBitrate', '8000000');
+          transcodeParams.MaxWidth = '1920';
+          transcodeParams.MaxHeight = '1080';
+          transcodeParams.VideoBitrate = '8000000';
           break;
       }
 
-      hlsUrl = `${process.env.JELLYFIN_SERVER}/Videos/${itemId}/master.m3u8?${transcodeParams.toString()}`;
-      directUrl = `${process.env.JELLYFIN_SERVER}/Videos/${itemId}/stream?${transcodeParams.toString()}`;
+      const paramString = new URLSearchParams(transcodeParams).toString();
+      hlsUrl = `${process.env.JELLYFIN_SERVER}/Videos/${itemId}/master.m3u8?${paramString}`;
+      directUrl = `${process.env.JELLYFIN_SERVER}/Videos/${itemId}/stream?${paramString}`;
       streamUrl = hlsUrl;
       transcodeReasons = mediaSource.TranscodingInfo?.TranscodeReasons || ['Full transcode required'];
     }
 
-    // If HLS format is requested, proxy the actual HLS manifest
+    // If HLS format is requested, just redirect to direct stream since HLS is problematic
     if (format === 'hls') {
-      try {
-        const hlsResponse = await axios.get(hlsUrl, {
-          responseType: 'text',
-          timeout: 10000
-        });
-        
-        // Set appropriate headers for HLS
-        res.set({
-          'Content-Type': 'application/vnd.apple.mpegurl',
-          'Cache-Control': 'no-cache',
-          'Access-Control-Allow-Origin': '*',
-          'Access-Control-Allow-Headers': 'Range'
-        });
-        
-        return res.send(hlsResponse.data);
-      } catch (hlsError) {
-        console.error('HLS streaming error:', hlsError.message);
-        return res.status(500).json({ 
-          error: 'Failed to fetch HLS manifest',
-          details: hlsError.message,
-          fallbackUrl: directUrl
-        });
-      }
+      console.log(`🎯 HLS requested for ${itemId}, redirecting to direct stream: ${directUrl}`);
+      return res.redirect(directUrl);
     }
 
-    // If direct format is requested, redirect to the direct stream
+    // If direct format is requested, proxy the stream with proper headers
     if (format === 'direct') {
-      return res.redirect(directUrl);
+      try {
+        console.log(`🎯 Direct stream requested for ${itemId}, proxying: ${directUrl}`);
+        
+        // Get the video stream from Jellyfin
+        const streamResponse = await axios.get(directUrl.replace(process.env.JELLYFIN_SERVER, ''), {
+          responseType: 'stream',
+          timeout: 30000
+        });
+        
+        // Set proper headers for video streaming
+        res.set({
+          'Content-Type': streamResponse.headers['content-type'] || 'video/mp4',
+          'Content-Length': streamResponse.headers['content-length'],
+          'Accept-Ranges': 'bytes',
+          'Cache-Control': 'public, max-age=3600',
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Headers': 'Range',
+          'Access-Control-Expose-Headers': 'Content-Length, Content-Range'
+        });
+        
+        // Pipe the video stream
+        streamResponse.data.pipe(res);
+        console.log(`✓ Direct stream proxied successfully for ${itemId}`);
+        return;
+        
+      } catch (streamError) {
+        console.error('Direct stream proxy error:', streamError.message);
+        return res.status(500).json({ 
+          error: 'Failed to proxy video stream',
+          details: streamError.message
+        });
+      }
     }
 
     // Default: return metadata JSON

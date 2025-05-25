@@ -358,48 +358,25 @@ class AdminDashboard {
         // Stop existing stream
         this.clearPlayer();
 
-        // Try HLS first if supported
-        if (Hls.isSupported()) {
-            this.hls = new Hls({
-                debug: false,
-                enableWorker: false
-            });
-            
-            this.hls.loadSource(streamData.hlsUrl);
-            this.hls.attachMedia(video);
-            
-            this.hls.on(Hls.Events.MANIFEST_PARSED, () => {
-                console.log('HLS manifest loaded, found ' + this.hls.levels.length + ' quality levels');
-            });
-            
-            this.hls.on(Hls.Events.ERROR, (event, data) => {
-                console.error('HLS error:', data);
-                if (data.fatal) {
-                    this.logTestResult(`✗ HLS Error: ${data.type} - ${data.details}`, 'error');
-                    // Fallback to direct URL
-                    this.playDirectVideo(streamData.directUrl);
-                }
-            });
-            
-            this.logTestResult(`▶ Playing ${streamData.name} via HLS`, 'info');
-        } 
-        // Fallback for browsers that don't support HLS
-        else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-            video.src = streamData.hlsUrl;
-            this.logTestResult(`▶ Playing ${streamData.name} via native HLS`, 'info');
-        } 
-        // Final fallback to direct stream
-        else {
-            this.playDirectVideo(streamData.directUrl);
-        }
+        // Since our server redirects HLS to direct streams, just use direct playback
+        this.logTestResult(`▶ Playing ${streamData.name} via direct stream`, 'info');
+        this.playDirectVideo(streamData.directUrl);
     }
 
     playDirectVideo(directUrl) {
         const video = document.getElementById('videoPlayer');
         if (!video) return;
         
-        video.src = directUrl;
-        this.logTestResult(`▶ Playing via direct stream (fallback)`, 'info');
+        // Use our API's proxied stream instead of direct Jellyfin URL
+        const itemId = this.currentVideo?.id;
+        if (itemId) {
+            const proxiedUrl = `/api/stream/${itemId}?format=direct`;
+            video.src = proxiedUrl;
+            this.logTestResult(`▶ Playing via proxied direct stream`, 'info');
+        } else {
+            video.src = directUrl;
+            this.logTestResult(`▶ Playing via direct stream (fallback)`, 'info');
+        }
     }
 
     clearPlayer() {
