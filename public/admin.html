@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Jellyfin-Resonite API - Admin Panel</title>
+    <link rel="stylesheet" href="admin.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- HLS.js for video streaming -->
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <div class="header-content">
+                <div class="logo">
+                    <i class="fas fa-server"></i>
+                    <h1>Jellyfin-Resonite API</h1>
+                </div>
+                <div class="header-stats">
+                    <div class="status-indicator online" id="status">
+                        <span class="status-dot"></span>
+                        <span>Online</span>
+                    </div>
+                    <div class="status-indicator" id="jellyfinStatus">
+                        <span class="status-dot"></span>
+                        <span>Jellyfin: --</span>
+                    </div>
+                    <div class="last-updated">
+                        Last updated: <span id="lastUpdated">--</span>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <div class="dashboard">
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-icon">
+                        <i class="fas fa-clock"></i>
+                    </div>
+                    <div class="stat-content">
+                        <h3>Server Uptime</h3>
+                        <div class="stat-value" id="uptime">--</div>
+                        <div class="stat-subtitle">Since <span id="startTime">--</span></div>
+                    </div>
+                </div>
+
+                <div class="stat-card">
+                    <div class="stat-icon">
+                        <i class="fas fa-chart-line"></i>
+                    </div>
+                    <div class="stat-content">
+                        <h3>Total Requests</h3>
+                        <div class="stat-value" id="totalRequests">--</div>
+                        <div class="stat-subtitle"><span id="requestsPerHour">--</span> req/hour</div>
+                    </div>
+                </div>
+
+                <div class="stat-card">
+                    <div class="stat-icon">
+                        <i class="fas fa-play-circle"></i>
+                    </div>
+                    <div class="stat-content">
+                        <h3>Active Streams</h3>
+                        <div class="stat-value" id="activeStreams">--</div>
+                        <div class="stat-subtitle"><span id="totalStreams">--</span> total</div>
+                    </div>
+                </div>
+
+                <div class="stat-card">
+                    <div class="stat-icon">
+                        <i class="fas fa-network-wired"></i>
+                    </div>
+                    <div class="stat-content">
+                        <h3>Bandwidth Usage</h3>
+                        <div class="stat-value" id="bandwidth">--</div>
+                        <div class="stat-subtitle">Total transferred</div>
+                    </div>
+                </div>
+
+                <div class="stat-card">
+                    <div class="stat-icon">
+                        <i class="fas fa-link"></i>
+                    </div>
+                    <div class="stat-content">
+                        <h3>Jellyfin Status</h3>
+                        <div class="stat-value" id="jellyfinConnected">--</div>
+                        <div class="stat-subtitle" id="jellyfinVersion">--</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="content-grid">
+                <div class="panel">
+                    <div class="panel-header">
+                        <h2><i class="fas fa-tachometer-alt"></i> API Performance</h2>
+                    </div>
+                    <div class="panel-content">
+                        <div class="api-stats" id="apiStats">
+                            <!-- API stats will be populated here -->
+                        </div>
+                    </div>
+                </div>
+
+                <div class="panel">
+                    <div class="panel-header">
+                        <h2><i class="fas fa-stream"></i> Active Streams</h2>
+                        <button class="refresh-btn" onclick="refreshData()">
+                            <i class="fas fa-sync-alt"></i>
+                        </button>
+                    </div>
+                    <div class="panel-content">
+                        <div class="streams-container" id="activeStreamsList">
+                            <!-- Active streams will be populated here -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="panel full-width">
+                <div class="panel-header">
+                    <h2><i class="fas fa-flask"></i> API Test Panel</h2>
+                    <div class="test-controls">
+                        <button class="test-btn" onclick="testAllEndpoints()">
+                            <i class="fas fa-play"></i> Test All
+                        </button>
+                    </div>
+                </div>
+                <div class="panel-content">
+                    <div class="test-grid">
+                        <div class="test-item">
+                            <div class="test-header">
+                                <h4>Libraries</h4>
+                                <button class="test-btn-small" onclick="testEndpoint('libraries')">
+                                    <i class="fas fa-play"></i>
+                                </button>
+                            </div>
+                            <div class="test-result" id="test-libraries">
+                                <span class="test-status">Ready</span>
+                            </div>
+                        </div>
+
+                        <div class="test-item">
+                            <div class="test-header">
+                                <h4>Recent Items</h4>
+                                <button class="test-btn-small" onclick="testEndpoint('recent')">
+                                    <i class="fas fa-play"></i>
+                                </button>
+                            </div>
+                            <div class="test-result" id="test-recent">
+                                <span class="test-status">Ready</span>
+                            </div>
+                        </div>
+
+                        <div class="test-item">
+                            <div class="test-header">
+                                <h4>Search</h4>
+                                <button class="test-btn-small" onclick="testEndpoint('search')">
+                                    <i class="fas fa-play"></i>
+                                </button>
+                            </div>
+                            <div class="test-result" id="test-search">
+                                <span class="test-status">Ready</span>
+                            </div>
+                        </div>
+
+                        <div class="test-item">
+                            <div class="test-header">
+                                <h4>System Info</h4>
+                                <button class="test-btn-small" onclick="testEndpoint('system')">
+                                    <i class="fas fa-play"></i>
+                                </button>
+                            </div>
+                            <div class="test-result" id="test-system">
+                                <span class="test-status">Ready</span>
+                            </div>
+                        </div>
+
+                        <div class="test-item">
+                            <div class="test-header">
+                                <h4>Videos</h4>
+                                <button class="test-btn-small" onclick="testEndpoint('videos')">
+                                    <i class="fas fa-play"></i>
+                                </button>
+                            </div>
+                            <div class="test-result" id="test-videos">
+                                <span class="test-status">Ready</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="test-output" id="testOutput">
+                        <h4>Test Results</h4>
+                        <div class="test-log" id="testLog">
+                            <p>Click "Test All" or individual test buttons to see results...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="panel full-width">
+                <div class="panel-header">
+                    <h2><i class="fas fa-video"></i> Video Stream Test</h2>
+                    <div class="test-controls">
+                        <button class="test-btn" onclick="loadVideoList()">
+                            <i class="fas fa-list"></i> Load Videos
+                        </button>
+                        <button class="test-btn" onclick="clearPlayer()">
+                            <i class="fas fa-stop"></i> Stop Player
+                        </button>
+                    </div>
+                </div>
+                <div class="panel-content">
+                    <div class="video-test-container">
+                        <div class="video-list-section">
+                            <h4>Available Videos</h4>
+                            <div class="video-list" id="videoList">
+                                <p class="no-videos">Click "Load Videos" to see your streamable content...</p>
+                            </div>
+                        </div>
+                        
+                        <div class="video-player-section">
+                            <h4>Video Player</h4>
+                            <div class="video-player-container">
+                                <video id="videoPlayer" controls preload="metadata" 
+                                       style="width: 100%; max-width: 800px; height: auto;">
+                                    <p>Your browser doesn't support HTML5 video.</p>
+                                </video>
+                                <div class="video-info" id="videoInfo">
+                                    <p>Select a video from the list to start testing stream playback...</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="panel full-width">
+                <div class="panel-header">
+                    <h2><i class="fas fa-chart-area"></i> System Information</h2>
+                </div>
+                <div class="panel-content">
+                    <div class="system-grid">
+                        <div class="system-item">
+                            <label>API Version</label>
+                            <span id="apiVersion">--</span>
+                        </div>
+                        <div class="system-item">
+                            <label>Server Start</label>
+                            <span id="serverStart">--</span>
+                        </div>
+                        <div class="system-item">
+                            <label>Environment</label>
+                            <span id="environment">Production</span>
+                        </div>
+                        <div class="system-item">
+                            <label>Rate Limit</label>
+                            <span>1000 req/15min</span>
+                        </div>
+                        <div class="system-item">
+                            <label>Jellyfin Server</label>
+                            <span id="jellyfinServer">--</span>
+                        </div>
+                        <div class="system-item">
+                            <label>Jellyfin Version</label>
+                            <span id="jellyfinVersionSystem">--</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="loading-overlay" id="loadingOverlay">
+        <div class="loading-spinner">
+            <i class="fas fa-sync-alt fa-spin"></i>
+            <p>Loading data...</p>
+        </div>
+    </div>
+
+    <script src="admin.js"></script>
+</body>
+</html>

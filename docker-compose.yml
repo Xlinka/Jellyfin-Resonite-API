@@ -1,0 +1,59 @@
+version: '3.8'
+
+services:
+  jellyfin-resonite-api:
+    build: .
+    container_name: jellyfin-resonite-api
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    environment:
+      # Jellyfin Configuration
+      - JELLYFIN_SERVER=${JELLYFIN_SERVER:-http://host.docker.internal:8096}
+      - JELLYFIN_USERNAME=${JELLYFIN_USERNAME}
+      - JELLYFIN_PASSWORD=${JELLYFIN_PASSWORD}
+      
+      # API Configuration
+      - PORT=3001
+      - NODE_ENV=production
+      - RATE_LIMIT_MAX=${RATE_LIMIT_MAX:-1000}
+      
+      # Cache Settings
+      - AUTH_CACHE_DURATION=${AUTH_CACHE_DURATION:-3600}
+      - LIBRARY_CACHE_DURATION=${LIBRARY_CACHE_DURATION:-300}
+      
+      # CORS Settings
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-}
+    
+    # Optional: Mount config for persistent settings
+    # volumes:
+    #   - ./config:/app/config:ro
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 128M
+    
+    # Network mode for easier Jellyfin access
+    # Use this if Jellyfin is running on the same machine
+    # network_mode: "host"
+    
+    # Or use custom network
+    networks:
+      - jellyfin-network
+
+# Optional: Custom network for better isolation
+networks:
+  jellyfin-network:
+    driver: bridge

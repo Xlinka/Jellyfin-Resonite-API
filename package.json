@@ -1,0 +1,25 @@
+{
+  "name": "jellyfin-resonite-api",
+  "version": "1.0.0",
+  "description": "API bridge for streaming Jellyfin content to Resonite VR",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js",
+    "docker:build": "docker build -t jellyfin-resonite-api .",
+    "docker:run": "docker run -p 3001:3001 --env-file .env jellyfin-resonite-api"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "axios": "^1.6.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express-rate-limit": "^7.1.5"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  },
+  "keywords": ["jellyfin", "resonite", "vr", "streaming", "api"],
+  "author": "Your Name",
+  "license": "MIT"
+}
