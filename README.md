@@ -650,41 +650,6 @@ GET /admin/requests
 }
 ```
 
----
-
-## 🎮 Resonite Integration
-
-### Basic Video Player (ResoniteScript)
-```csharp
-// Example Resonite script for video streaming
-public class JellyfinPlayer : Component
-{
-    [SyncRef] public VideoPlayer player;
-    [Sync] public string apiBaseUrl = "http://localhost:3001/api";
-    
-    public async Task PlayVideo(string itemId)
-    {
-        var response = await HTTP.GetAsync($"{apiBaseUrl}/stream/{itemId}");
-        var data = JSON.Parse(response);
-        
-        // Use HLS URL for best compatibility
-        player.URL.Value = data["hlsUrl"];
-        player.Play();
-    }
-}
-```
-
-### Quality Selection
-```csharp
-public async Task PlayVideoWithQuality(string itemId, string quality)
-{
-    var url = $"{apiBaseUrl}/stream/{itemId}?quality={quality}&format=hls";
-    player.URL.Value = url;
-    player.Play();
-}
-```
-
----
 
 ## 📊 Admin Dashboard Features
 
