@@ -223,6 +223,15 @@
                         
                         <div class="video-player-section">
                             <h4>Video Player</h4>
+                            <div class="video-controls">
+                                <label for="qualitySelect">Quality/Transcode:</label>
+                                <select id="qualitySelect" onchange="if(window.dashboard.currentVideo) window.dashboard.selectVideo(window.dashboard.currentVideo);">
+                                    <option value="auto">Auto (Direct Play)</option>
+                                    <option value="high">High (1080p Transcode)</option>
+                                    <option value="medium">Medium (720p Transcode)</option>
+                                    <option value="low">Low (480p Transcode)</option>
+                                </select>
+                            </div>
                             <div class="video-player-container">
                                 <video id="videoPlayer" controls preload="metadata" 
                                        style="width: 100%; max-width: 800px; height: auto;">

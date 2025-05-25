@@ -149,6 +149,32 @@ router.get('/:itemId', ensureAuth, async (req, res) => {
       try {
         console.log(`🎯 Direct stream requested for ${itemId}, proxying: ${directUrl}`);
         
+        // Track this stream session
+        const sessionId = `stream-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+        const streamInfo = {
+          itemId: itemId,
+          itemName: item.Name,
+          startTime: Date.now(),
+          quality: quality,
+          bitrate: parseInt(videoBitrate),
+          userAgent: req.get('User-Agent') || 'Unknown',
+          clientIP: req.ip || req.connection.remoteAddress,
+          isDirectPlay: isDirectPlay,
+          transcodeReasons: transcodeReasons
+        };
+        
+        // Store in global stats (imported from server.js scope - we'll need to pass this)
+        req.app.locals.serverStats = req.app.locals.serverStats || { 
+          streamCount: 0, 
+          activeStreams: new Map(),
+          totalBandwidth: 0
+        };
+        
+        req.app.locals.serverStats.streamCount++;
+        req.app.locals.serverStats.activeStreams.set(sessionId, streamInfo);
+        
+        console.log(`📊 Stream session ${sessionId} started for ${item.Name}`);
+        
         // Get the video stream from Jellyfin
         const streamResponse = await axios.get(directUrl.replace(process.env.JELLYFIN_SERVER, ''), {
           responseType: 'stream',
@@ -164,6 +190,15 @@ router.get('/:itemId', ensureAuth, async (req, res) => {
           'Access-Control-Allow-Origin': '*',
           'Access-Control-Allow-Headers': 'Range',
           'Access-Control-Expose-Headers': 'Content-Length, Content-Range'
+        });
+        
+        // Clean up stream session when connection closes
+        req.on('close', () => {
+          if (req.app.locals.serverStats.activeStreams.has(sessionId)) {
+            const duration = Date.now() - streamInfo.startTime;
+            console.log(`📊 Stream session ${sessionId} ended after ${Math.round(duration/1000)}s`);
+            req.app.locals.serverStats.activeStreams.delete(sessionId);
+          }
         });
         
         // Pipe the video stream

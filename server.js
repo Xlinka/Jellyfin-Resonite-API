@@ -126,6 +126,9 @@ app.use(limiter);
 // Initialize authentication on startup
 initializeAuth();
 
+// Make serverStats available to routes
+app.locals.serverStats = serverStats;
+
 // Helper function to check Jellyfin connection status
 async function checkJellyfinStatus() {
   try {

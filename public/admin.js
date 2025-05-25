@@ -333,15 +333,25 @@ class AdminDashboard {
         
         this.currentVideo = video;
         
+        // Play video with current quality setting
+        this.playVideoWithQuality();
+    }
+
+    async playVideoWithQuality() {
+        if (!this.currentVideo) return;
+
+        const qualitySelect = document.getElementById('qualitySelect');
+        const quality = qualitySelect ? qualitySelect.value : 'auto';
+
         try {
-            // Get stream URL
-            const response = await fetch(`/admin/test/stream/${video.id}`);
+            // Get stream URL with quality parameter
+            const response = await fetch(`/admin/test/stream/${this.currentVideo.id}?quality=${quality}`);
             const data = await response.json();
             
             if (data.success) {
                 this.playVideo(data.data);
                 this.updateVideoInfo(data.data);
-                this.logTestResult(`✓ Stream: ${video.name} - Stream URL generated`, 'success');
+                this.logTestResult(`✓ Stream: ${this.currentVideo.name} - Quality: ${quality}`, 'success');
             } else {
                 throw new Error(data.error || 'Failed to get stream URL');
             }
@@ -358,24 +368,29 @@ class AdminDashboard {
         // Stop existing stream
         this.clearPlayer();
 
-        // Since our server redirects HLS to direct streams, just use direct playback
+        // Use direct playback with our proxied stream
         this.logTestResult(`▶ Playing ${streamData.name} via direct stream`, 'info');
-        this.playDirectVideo(streamData.directUrl);
+        this.playDirectVideo();
     }
 
-    playDirectVideo(directUrl) {
+    playDirectVideo() {
         const video = document.getElementById('videoPlayer');
         if (!video) return;
         
-        // Use our API's proxied stream instead of direct Jellyfin URL
         const itemId = this.currentVideo?.id;
         if (itemId) {
-            const proxiedUrl = `/api/stream/${itemId}?format=direct`;
+            // Get selected quality from UI
+            const qualitySelect = document.getElementById('qualitySelect');
+            const quality = qualitySelect ? qualitySelect.value : 'auto';
+            
+            const proxiedUrl = `/api/stream/${itemId}?format=direct&quality=${quality}`;
             video.src = proxiedUrl;
-            this.logTestResult(`▶ Playing via proxied direct stream`, 'info');
-        } else {
-            video.src = directUrl;
-            this.logTestResult(`▶ Playing via direct stream (fallback)`, 'info');
+            
+            if (quality === 'auto') {
+                this.logTestResult(`▶ Playing via direct stream (auto quality)`, 'info');
+            } else {
+                this.logTestResult(`▶ Playing via transcoded stream (${quality} quality)`, 'info');
+            }
         }
     }
 
@@ -578,6 +593,12 @@ function loadVideoList() {
 function clearPlayer() {
     if (window.dashboard) {
         window.dashboard.clearPlayer();
+    }
+}
+
+function changeVideoQuality() {
+    if (window.dashboard && window.dashboard.currentVideo) {
+        window.dashboard.playVideoWithQuality();
     }
 }
 
