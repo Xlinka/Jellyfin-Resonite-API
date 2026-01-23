@@ -1,16 +1,17 @@
 const express = require('express');
 const { getAuthenticatedAxios, getAuthData, ensureAuth } = require('../entry/middleware/auth');
+const { buildImageUrl, parseIntParam } = require('../utils/helpers');
 const router = express.Router();
 
 /**
  * Search across all libraries
- * GET /api/search?q=query&type=Movie,Series&limit=20
+ * GET /api/search?q=query
  */
 router.get('/', ensureAuth, async (req, res) => {
   try {
-    const { 
-      q, 
-      limit = 20, 
+    const {
+      q,
+      limit = 20,
       type = 'Movie,Series,Episode,Video',
       includeItemTypes,
       excludeItemTypes,
@@ -21,20 +22,21 @@ router.get('/', ensureAuth, async (req, res) => {
     } = req.query;
 
     if (!q || q.trim().length === 0) {
-      return res.json({ 
-        results: [], 
-        query: '', 
+      return res.json({
+        results: [],
+        query: '',
         totalCount: 0,
         message: 'No search query provided'
       });
     }
 
+    const limitNum = parseIntParam(limit, 20, 1, 100);
     const auth = await getAuthData();
     const axios = await getAuthenticatedAxios();
 
     const params = {
       SearchTerm: q.trim(),
-      Limit: parseInt(limit),
+      Limit: limitNum,
       IncludeItemTypes: includeItemTypes || type,
       Recursive: true,
       Fields: 'PrimaryImageAspectRatio,ProductionYear,Overview,Genres,RunTimeTicks,UserData',
@@ -42,53 +44,41 @@ router.get('/', ensureAuth, async (req, res) => {
       SortOrder: sortOrder
     };
 
-    // Add optional filters
     if (excludeItemTypes) params.ExcludeItemTypes = excludeItemTypes;
     if (genres) params.Genres = genres;
     if (years) params.Years = years;
 
     const response = await axios.get(`/Users/${auth.userId}/Items`, { params });
 
-    const results = response.data.Items.map(item => {
-      const videoStream = item.MediaSources?.[0]?.MediaStreams?.find(s => s.Type === 'Video');
-      
-      return {
-        id: item.Id,
-        name: item.Name,
-        sortName: item.SortName,
-        type: item.Type,
-        year: item.ProductionYear,
-        overview: item.Overview || '',
-        genres: item.Genres || [],
-        duration: item.RunTimeTicks ? Math.round(item.RunTimeTicks / 10000000) : 0,
-        thumbnail: item.ImageTags?.Primary ? 
-          `${process.env.JELLYFIN_SERVER}/Items/${item.Id}/Images/Primary?height=300&tag=${item.ImageTags.Primary}` : 
-          null,
-        backdrop: item.BackdropImageTags?.[0] ? 
-          `${process.env.JELLYFIN_SERVER}/Items/${item.Id}/Images/Backdrop?width=1920&tag=${item.BackdropImageTags[0]}` : 
-          null,
-        rating: item.CommunityRating,
-        criticRating: item.CriticRating,
-        hasVideo: item.MediaSources && item.MediaSources.length > 0,
-        resolution: videoStream?.Height || 0,
-        isWatched: item.UserData?.Played || false,
-        // Additional context for episodes/series
-        seriesName: item.SeriesName,
-        seasonNumber: item.ParentIndexNumber,
-        episodeNumber: item.IndexNumber,
-        // Match relevance score (simple implementation)
-        relevanceScore: calculateRelevanceScore(item.Name, q)
-      };
-    });
+    const results = response.data.Items.map(item => ({
+      id: item.Id,
+      name: item.Name,
+      sortName: item.SortName,
+      type: item.Type,
+      year: item.ProductionYear,
+      overview: item.Overview || '',
+      genres: item.Genres || [],
+      duration: item.RunTimeTicks ? Math.round(item.RunTimeTicks / 10000000) : 0,
+      thumbnail: buildImageUrl(item, 'Primary', 300),
+      backdrop: buildImageUrl(item, 'Backdrop', 1080),
+      rating: item.CommunityRating,
+      criticRating: item.CriticRating,
+      hasVideo: item.MediaSources?.length > 0,
+      isWatched: item.UserData?.Played || false,
+      seriesName: item.SeriesName,
+      seasonNumber: item.ParentIndexNumber,
+      episodeNumber: item.IndexNumber,
+      relevanceScore: calculateRelevanceScore(item.Name, q)
+    }));
 
-    // Sort by relevance if searching
+    // Sort by relevance
     results.sort((a, b) => b.relevanceScore - a.relevanceScore);
 
     res.json({
       results,
       query: q,
       totalCount: response.data.TotalRecordCount,
-      limit: parseInt(limit),
+      limit: limitNum,
       filters: {
         type: includeItemTypes || type,
         excludeTypes: excludeItemTypes || null,
@@ -101,7 +91,7 @@ router.get('/', ensureAuth, async (req, res) => {
 
   } catch (error) {
     console.error('Search error:', error.message);
-    res.status(500).json({ 
+    res.status(500).json({
       error: 'Search failed',
       details: error.response?.data?.message || error.message
     });
@@ -120,14 +110,14 @@ router.get('/suggestions', ensureAuth, async (req, res) => {
       return res.json({ suggestions: [] });
     }
 
+    const limitNum = parseIntParam(limit, 10, 1, 20);
     const auth = await getAuthData();
     const axios = await getAuthenticatedAxios();
 
-    // Get quick results for suggestions
     const response = await axios.get(`/Users/${auth.userId}/Items`, {
       params: {
         SearchTerm: q.trim(),
-        Limit: parseInt(limit),
+        Limit: limitNum,
         IncludeItemTypes: 'Movie,Series,Person,Genre',
         Recursive: true,
         Fields: 'PrimaryImageAspectRatio'
@@ -138,19 +128,14 @@ router.get('/suggestions', ensureAuth, async (req, res) => {
       id: item.Id,
       name: item.Name,
       type: item.Type,
-      thumbnail: item.ImageTags?.Primary ? 
-        `${process.env.JELLYFIN_SERVER}/Items/${item.Id}/Images/Primary?height=150&tag=${item.ImageTags.Primary}` : 
-        null
+      thumbnail: buildImageUrl(item, 'Primary', 150)
     }));
 
-    res.json({ 
-      suggestions,
-      query: q 
-    });
+    res.json({ suggestions, query: q });
 
   } catch (error) {
     console.error('Search suggestions error:', error.message);
-    res.status(500).json({ 
+    res.status(500).json({
       error: 'Failed to get search suggestions',
       details: error.response?.data?.message || error.message
     });
@@ -165,6 +150,7 @@ router.get('/genre/:genreName', ensureAuth, async (req, res) => {
   try {
     const { genreName } = req.params;
     const { limit = 50, type = 'Movie,Series' } = req.query;
+    const limitNum = parseIntParam(limit, 50, 1, 100);
 
     const auth = await getAuthData();
     const axios = await getAuthenticatedAxios();
@@ -172,7 +158,7 @@ router.get('/genre/:genreName', ensureAuth, async (req, res) => {
     const response = await axios.get(`/Users/${auth.userId}/Items`, {
       params: {
         Genres: genreName,
-        Limit: parseInt(limit),
+        Limit: limitNum,
         IncludeItemTypes: type,
         Recursive: true,
         Fields: 'PrimaryImageAspectRatio,ProductionYear,Overview,Genres,RunTimeTicks',
@@ -188,9 +174,7 @@ router.get('/genre/:genreName', ensureAuth, async (req, res) => {
       year: item.ProductionYear,
       overview: item.Overview || '',
       duration: item.RunTimeTicks ? Math.round(item.RunTimeTicks / 10000000) : 0,
-      thumbnail: item.ImageTags?.Primary ? 
-        `${process.env.JELLYFIN_SERVER}/Items/${item.Id}/Images/Primary?height=300&tag=${item.ImageTags.Primary}` : 
-        null,
+      thumbnail: buildImageUrl(item, 'Primary', 300),
       rating: item.CommunityRating
     }));
 
@@ -198,12 +182,12 @@ router.get('/genre/:genreName', ensureAuth, async (req, res) => {
       items,
       genre: genreName,
       totalCount: response.data.TotalRecordCount,
-      limit: parseInt(limit)
+      limit: limitNum
     });
 
   } catch (error) {
     console.error('Genre search error:', error.message);
-    res.status(500).json({ 
+    res.status(500).json({
       error: 'Genre search failed',
       details: error.response?.data?.message || error.message
     });
@@ -219,24 +203,28 @@ router.get('/genres', ensureAuth, async (req, res) => {
     const auth = await getAuthData();
     const axios = await getAuthenticatedAxios();
 
-    const response = await axios.get(`/Genres`, {
+    const response = await axios.get('/Genres', {
       params: {
         UserId: auth.userId,
         Fields: 'ItemCounts'
       }
     });
 
-    const genres = response.data.Items.map(genre => ({
-      id: genre.Id,
-      name: genre.Name,
-      itemCount: genre.ItemCounts?.MovieCount + genre.ItemCounts?.SeriesCount + genre.ItemCounts?.EpisodeCount || 0
-    })).filter(genre => genre.itemCount > 0);
+    const genres = response.data.Items
+      .map(genre => ({
+        id: genre.Id,
+        name: genre.Name,
+        itemCount: (genre.ItemCounts?.MovieCount || 0) +
+          (genre.ItemCounts?.SeriesCount || 0) +
+          (genre.ItemCounts?.EpisodeCount || 0)
+      }))
+      .filter(genre => genre.itemCount > 0);
 
     res.json({ genres });
 
   } catch (error) {
     console.error('Genres error:', error.message);
-    res.status(500).json({ 
+    res.status(500).json({
       error: 'Failed to get genres',
       details: error.response?.data?.message || error.message
     });
@@ -248,26 +236,20 @@ router.get('/genres', ensureAuth, async (req, res) => {
  */
 function calculateRelevanceScore(itemName, searchQuery) {
   if (!itemName || !searchQuery) return 0;
-  
+
   const name = itemName.toLowerCase();
   const query = searchQuery.toLowerCase();
-  
-  // Exact match gets highest score
+
   if (name === query) return 100;
-  
-  // Starts with query gets high score
   if (name.startsWith(query)) return 80;
-  
-  // Contains query gets medium score
   if (name.includes(query)) return 60;
-  
-  // Word boundary matches get some score
+
   const words = query.split(' ');
   let wordScore = 0;
-  words.forEach(word => {
+  for (const word of words) {
     if (name.includes(word)) wordScore += 10;
-  });
-  
+  }
+
   return wordScore;
 }
 

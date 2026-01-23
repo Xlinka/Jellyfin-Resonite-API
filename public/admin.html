@@ -5,10 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Jellyfin-Resonite API - Admin Panel</title>
     <link rel="stylesheet" href="admin.css">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <!-- HLS.js for video streaming -->
-    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
 </head>
 <body>
     <div class="container">
@@ -37,9 +35,7 @@
         <div class="dashboard">
             <div class="stats-grid">
                 <div class="stat-card">
-                    <div class="stat-icon">
-                        <i class="fas fa-clock"></i>
-                    </div>
+                    <div class="stat-icon"><i class="fas fa-clock"></i></div>
                     <div class="stat-content">
                         <h3>Server Uptime</h3>
                         <div class="stat-value" id="uptime">--</div>
@@ -48,9 +44,7 @@
                 </div>
 
                 <div class="stat-card">
-                    <div class="stat-icon">
-                        <i class="fas fa-chart-line"></i>
-                    </div>
+                    <div class="stat-icon"><i class="fas fa-chart-line"></i></div>
                     <div class="stat-content">
                         <h3>Total Requests</h3>
                         <div class="stat-value" id="totalRequests">--</div>
@@ -59,9 +53,7 @@
                 </div>
 
                 <div class="stat-card">
-                    <div class="stat-icon">
-                        <i class="fas fa-play-circle"></i>
-                    </div>
+                    <div class="stat-icon"><i class="fas fa-play-circle"></i></div>
                     <div class="stat-content">
                         <h3>Active Streams</h3>
                         <div class="stat-value" id="activeStreams">--</div>
@@ -70,9 +62,7 @@
                 </div>
 
                 <div class="stat-card">
-                    <div class="stat-icon">
-                        <i class="fas fa-network-wired"></i>
-                    </div>
+                    <div class="stat-icon"><i class="fas fa-network-wired"></i></div>
                     <div class="stat-content">
                         <h3>Bandwidth Usage</h3>
                         <div class="stat-value" id="bandwidth">--</div>
@@ -81,9 +71,7 @@
                 </div>
 
                 <div class="stat-card">
-                    <div class="stat-icon">
-                        <i class="fas fa-link"></i>
-                    </div>
+                    <div class="stat-icon"><i class="fas fa-link"></i></div>
                     <div class="stat-content">
                         <h3>Jellyfin Status</h3>
                         <div class="stat-value" id="jellyfinConnected">--</div>
@@ -98,9 +86,7 @@
                         <h2><i class="fas fa-tachometer-alt"></i> API Performance</h2>
                     </div>
                     <div class="panel-content">
-                        <div class="api-stats" id="apiStats">
-                            <!-- API stats will be populated here -->
-                        </div>
+                        <div class="api-stats" id="apiStats"></div>
                     </div>
                 </div>
 
@@ -112,9 +98,7 @@
                         </button>
                     </div>
                     <div class="panel-content">
-                        <div class="streams-container" id="activeStreamsList">
-                            <!-- Active streams will be populated here -->
-                        </div>
+                        <div class="streams-container" id="activeStreamsList"></div>
                     </div>
                 </div>
             </div>
@@ -190,7 +174,7 @@
                             </div>
                         </div>
                     </div>
-                    
+
                     <div class="test-output" id="testOutput">
                         <h4>Test Results</h4>
                         <div class="test-log" id="testLog">
@@ -220,12 +204,12 @@
                                 <p class="no-videos">Click "Load Videos" to see your streamable content...</p>
                             </div>
                         </div>
-                        
+
                         <div class="video-player-section">
                             <h4>Video Player</h4>
                             <div class="video-controls">
                                 <label for="qualitySelect">Quality/Transcode:</label>
-                                <select id="qualitySelect" onchange="if(window.dashboard.currentVideo) window.dashboard.selectVideo(window.dashboard.currentVideo);">
+                                <select id="qualitySelect" onchange="changeVideoQuality()">
                                     <option value="auto">Auto (Direct Play)</option>
                                     <option value="high">High (1080p Transcode)</option>
                                     <option value="medium">Medium (720p Transcode)</option>
@@ -233,10 +217,7 @@
                                 </select>
                             </div>
                             <div class="video-player-container">
-                                <video id="videoPlayer" controls preload="metadata" 
-                                       style="width: 100%; max-width: 800px; height: auto;">
-                                    <p>Your browser doesn't support HTML5 video.</p>
-                                </video>
+                                <video id="videoPlayer" controls preload="metadata"></video>
                                 <div class="video-info" id="videoInfo">
                                     <p>Select a video from the list to start testing stream playback...</p>
                                 </div>

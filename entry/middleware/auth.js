@@ -1,13 +1,24 @@
 const axios = require('axios');
+const http = require('http');
+const https = require('https');
+
+// Connection pooling agents for better performance
+const httpAgent = new http.Agent({ keepAlive: true, maxSockets: 10 });
+const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 10 });
 
 // Global auth state
 let authData = {
   token: null,
   userId: null,
   serverId: null,
-  lastAuth: null,
-  isAuthenticating: false
+  lastAuth: null
 };
+
+// Promise-based auth queue (replaces busy-wait)
+let authPromise = null;
+
+// Singleton axios instance for all requests
+let axiosInstance = null;
 
 const JELLYFIN_SERVER = process.env.JELLYFIN_SERVER;
 const USERNAME = process.env.JELLYFIN_USERNAME;
@@ -18,22 +29,26 @@ const AUTH_CACHE_DURATION = (parseInt(process.env.AUTH_CACHE_DURATION) || 3600) 
  * Initialize authentication on server startup
  */
 async function initializeAuth() {
-  console.log('🔐 Initializing Jellyfin authentication...');
+  console.log('Initializing Jellyfin authentication...');
   try {
     await authenticate();
-    console.log('✅ Authentication successful');
-    
+    console.log('Authentication successful');
+
     // Set up periodic re-authentication
     setInterval(async () => {
       if (shouldReauthenticate()) {
-        console.log('🔄 Refreshing authentication...');
-        await authenticate();
+        console.log('Refreshing authentication...');
+        try {
+          await authenticate();
+        } catch (err) {
+          console.error('Auth refresh failed:', err.message);
+        }
       }
-    }, 300000); // Check every 5 minutes
-    
+    }, 300000);
+
   } catch (error) {
-    console.error('❌ Initial authentication failed:', error.message);
-    console.error('⚠️  Server will continue but API calls may fail');
+    console.error('Initial authentication failed:', error.message);
+    console.error('Server will continue but API calls may fail');
   }
 }
 
@@ -41,55 +56,74 @@ async function initializeAuth() {
  * Perform authentication with Jellyfin server
  */
 async function authenticate() {
-  if (authData.isAuthenticating) {
-    // Wait for ongoing authentication
-    while (authData.isAuthenticating) {
-      await new Promise(resolve => setTimeout(resolve, 100));
-    }
-    return authData;
+  // If auth is already in progress, wait for it
+  if (authPromise) {
+    return authPromise;
   }
 
-  authData.isAuthenticating = true;
+  authPromise = (async () => {
+    try {
+      const response = await axios.post(`${JELLYFIN_SERVER}/Users/authenticatebyname`, {
+        Username: USERNAME,
+        Pw: PASSWORD
+      }, {
+        headers: {
+          'X-Emby-Authorization': `MediaBrowser Client="ResoniteAPI", Device="Server", DeviceId="resonite-api-server", Version="1.0.0"`
+        },
+        timeout: 10000,
+        httpAgent,
+        httpsAgent
+      });
 
-  try {
-    const response = await axios.post(`${JELLYFIN_SERVER}/Users/authenticatebyname`, {
-      Username: USERNAME,
-      Pw: PASSWORD
-    }, {
-      headers: {
-        'X-Emby-Authorization': `MediaBrowser Client="ResoniteAPI", Device="Server", DeviceId="resonite-${Date.now()}", Version="1.0.0"`
-      },
-      timeout: 10000
-    });
+      authData.token = response.data.AccessToken;
+      authData.userId = response.data.User.Id;
+      authData.serverId = response.data.ServerId;
+      authData.lastAuth = Date.now();
 
-    authData.token = response.data.AccessToken;
-    authData.userId = response.data.User.Id;
-    authData.serverId = response.data.ServerId;
-    authData.lastAuth = Date.now();
-    authData.isAuthenticating = false;
+      // Update singleton axios instance with new token
+      updateAxiosInstance();
 
-    console.log(`✅ Authenticated as: ${response.data.User.Name}`);
-    return authData;
+      console.log(`Authenticated as: ${response.data.User.Name}`);
+      return authData;
 
-  } catch (error) {
-    authData.isAuthenticating = false;
-    
-    if (error.response) {
-      throw new Error(`Authentication failed: ${error.response.status} - ${error.response.data?.message || 'Invalid credentials'}`);
-    } else if (error.code === 'ECONNREFUSED') {
-      throw new Error(`Cannot connect to Jellyfin server at ${JELLYFIN_SERVER}`);
-    } else {
-      throw new Error(`Authentication error: ${error.message}`);
+    } catch (error) {
+      if (error.response) {
+        throw new Error(`Authentication failed: ${error.response.status} - ${error.response.data?.message || 'Invalid credentials'}`);
+      } else if (error.code === 'ECONNREFUSED') {
+        throw new Error(`Cannot connect to Jellyfin server at ${JELLYFIN_SERVER}`);
+      } else {
+        throw new Error(`Authentication error: ${error.message}`);
+      }
+    } finally {
+      authPromise = null;
     }
-  }
+  })();
+
+  return authPromise;
+}
+
+/**
+ * Update the singleton axios instance with current auth token
+ */
+function updateAxiosInstance() {
+  axiosInstance = axios.create({
+    baseURL: JELLYFIN_SERVER,
+    headers: {
+      'X-Emby-Token': authData.token,
+      'Content-Type': 'application/json'
+    },
+    timeout: 30000,
+    httpAgent,
+    httpsAgent
+  });
 }
 
 /**
  * Check if we need to re-authenticate
  */
 function shouldReauthenticate() {
-  return !authData.token || 
-         !authData.lastAuth || 
+  return !authData.token ||
+         !authData.lastAuth ||
          (Date.now() - authData.lastAuth) > AUTH_CACHE_DURATION;
 }
 
@@ -100,28 +134,22 @@ async function getAuthData() {
   if (shouldReauthenticate()) {
     await authenticate();
   }
-  
+
   if (!authData.token) {
     throw new Error('Authentication not available');
   }
-  
+
   return authData;
 }
 
 /**
- * Create authenticated axios instance
+ * Get singleton authenticated axios instance
  */
 async function getAuthenticatedAxios() {
-  const auth = await getAuthData();
-  
-  return axios.create({
-    baseURL: JELLYFIN_SERVER,
-    headers: {
-      'X-Emby-Token': auth.token,
-      'Content-Type': 'application/json'
-    },
-    timeout: 30000
-  });
+  if (shouldReauthenticate() || !axiosInstance) {
+    await authenticate();
+  }
+  return axiosInstance;
 }
 
 /**

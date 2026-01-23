@@ -23,6 +23,9 @@
     --danger: #ef4444;
     --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3);
     --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.4);
+    --page-max-width: 1400px;
+    --page-padding: 28px;
+    --page-gap: 28px;
 }
 
 body {
@@ -36,9 +39,10 @@ body {
 }
 
 .container {
-    max-width: 1400px;
+    max-width: var(--page-max-width);
+    width: 100%;
     margin: 0 auto;
-    padding: 0 20px;
+    padding: 0 var(--page-padding);
 }
 
 /* Header Styles */
@@ -46,11 +50,12 @@ body {
     background: var(--bg-card);
     border-bottom: 1px solid var(--border-color);
     padding: 24px 0;
-    margin-bottom: 30px;
+    margin: 24px 0 32px;
     box-shadow: var(--shadow);
     position: sticky;
     top: 0;
     z-index: 100;
+    border-radius: 14px;
 }
 
 .header-content {
@@ -86,7 +91,9 @@ body {
 .header-stats {
     display: flex;
     align-items: center;
-    gap: 24px;
+    gap: 16px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
 }
 
 .status-indicator {
@@ -133,19 +140,19 @@ body {
 .dashboard {
     display: flex;
     flex-direction: column;
-    gap: 30px;
-    padding-bottom: 30px;
+    gap: var(--page-gap);
+    padding-bottom: 40px;
 }
 
 .stats-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
     gap: 20px;
 }
 
 .content-grid {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 30px;
 }
 
@@ -661,6 +668,14 @@ body {
     font-weight: 500;
 }
 
+.video-info .info-heading {
+    margin: 12px 0 6px;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
+}
+
 /* System Grid */
 .system-grid {
     display: grid;
@@ -734,7 +749,7 @@ body {
     }
     
     .stats-grid {
-        grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
     }
     
     .test-grid {
@@ -753,6 +768,8 @@ body {
     
     .header {
         padding: 16px 0;
+        margin: 16px 0 24px;
+        border-radius: 12px;
     }
     
     .header-content {

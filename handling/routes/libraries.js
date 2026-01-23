@@ -1,10 +1,10 @@
 const express = require('express');
 const { getAuthenticatedAxios, getAuthData, ensureAuth } = require('../../entry/middleware/auth');
+const { buildImageUrl, parseIntParam, SimpleCache } = require('../../utils/helpers');
 const router = express.Router();
 
-// Simple in-memory cache
-const cache = new Map();
-const CACHE_DURATION = (parseInt(process.env.LIBRARY_CACHE_DURATION) || 300) * 1000;
+// Cache with 5 minute TTL and max 50 entries
+const cache = new SimpleCache(50, 300000);
 
 /**
  * Get all media libraries
@@ -12,16 +12,13 @@ const CACHE_DURATION = (parseInt(process.env.LIBRARY_CACHE_DURATION) || 300) * 1
  */
 router.get('/', ensureAuth, async (req, res) => {
   try {
-    const cacheKey = 'libraries';
-    const cached = cache.get(cacheKey);
-    
-    if (cached && (Date.now() - cached.timestamp) < CACHE_DURATION) {
-      return res.json(cached.data);
+    const cached = cache.get('libraries');
+    if (cached) {
+      return res.json(cached);
     }
 
     const auth = await getAuthData();
     const axios = await getAuthenticatedAxios();
-    
     const response = await axios.get(`/Users/${auth.userId}/Views`);
 
     const libraries = response.data.Items
@@ -31,23 +28,16 @@ router.get('/', ensureAuth, async (req, res) => {
         name: lib.Name,
         type: lib.CollectionType,
         itemCount: lib.ChildCount || 0,
-        thumbnail: lib.ImageTags?.Primary ? 
-          `${process.env.JELLYFIN_SERVER}/Items/${lib.Id}/Images/Primary?height=300&tag=${lib.ImageTags.Primary}` : 
-          null
+        thumbnail: buildImageUrl(lib, 'Primary', 300)
       }));
 
     const result = { libraries };
-    
-    // Cache the result
-    cache.set(cacheKey, {
-      data: result,
-      timestamp: Date.now()
-    });
-
+    cache.set('libraries', result);
     res.json(result);
+
   } catch (error) {
     console.error('Libraries error:', error.message);
-    res.status(500).json({ 
+    res.status(500).json({
       error: 'Failed to load libraries',
       details: error.response?.data?.message || error.message
     });
@@ -72,36 +62,31 @@ router.get('/:libraryId/items', ensureAuth, async (req, res) => {
       years = ''
     } = req.query;
 
+    const pageNum = parseIntParam(page, 0, 0, 1000);
+    const limitNum = parseIntParam(limit, 50, 1, 100);
+
     const auth = await getAuthData();
     const axios = await getAuthenticatedAxios();
 
     const params = {
       ParentId: libraryId,
-      StartIndex: parseInt(page) * parseInt(limit),
-      Limit: parseInt(limit),
+      StartIndex: pageNum * limitNum,
+      Limit: limitNum,
       SearchTerm: search,
       SortBy: sortBy,
       SortOrder: sortOrder,
       Recursive: true,
       IncludeItemTypes: type,
-      Fields: 'BasicSyncInfo,PrimaryImageAspectRatio,ProductionYear,Overview,Genres,RunTimeTicks,MediaSources,UserData'
+      Fields: 'PrimaryImageAspectRatio,ProductionYear,Overview,Genres,RunTimeTicks,MediaSources,UserData'
     };
 
-    // Add genre filter if specified
-    if (genres) {
-      params.Genres = genres;
-    }
-
-    // Add year filter if specified
-    if (years) {
-      params.Years = years;
-    }
+    if (genres) params.Genres = genres;
+    if (years) params.Years = years;
 
     const response = await axios.get(`/Users/${auth.userId}/Items`, { params });
 
     const items = response.data.Items.map(item => {
       const videoStream = item.MediaSources?.[0]?.MediaStreams?.find(s => s.Type === 'Video');
-      
       return {
         id: item.Id,
         name: item.Name,
@@ -111,36 +96,29 @@ router.get('/:libraryId/items', ensureAuth, async (req, res) => {
         type: item.Type,
         genres: item.Genres || [],
         duration: item.RunTimeTicks ? Math.round(item.RunTimeTicks / 10000000) : 0,
-        thumbnail: item.ImageTags?.Primary ? 
-          `${process.env.JELLYFIN_SERVER}/Items/${item.Id}/Images/Primary?height=300&tag=${item.ImageTags.Primary}` : 
-          null,
-        backdrop: item.BackdropImageTags?.[0] ? 
-          `${process.env.JELLYFIN_SERVER}/Items/${item.Id}/Images/Backdrop?width=1920&tag=${item.BackdropImageTags[0]}` : 
-          null,
-        logo: item.ImageTags?.Logo ? 
-          `${process.env.JELLYFIN_SERVER}/Items/${item.Id}/Images/Logo?width=400&tag=${item.ImageTags.Logo}` : 
-          null,
-        hasVideo: item.MediaSources && item.MediaSources.length > 0,
+        thumbnail: buildImageUrl(item, 'Primary', 300),
+        backdrop: buildImageUrl(item, 'Backdrop', 1080),
+        hasVideo: item.MediaSources?.length > 0,
         resolution: videoStream?.Height || 0,
         codec: videoStream?.Codec || 'unknown',
         isWatched: item.UserData?.Played || false,
-        playbackPosition: item.UserData?.PlaybackPositionTicks ? 
-          Math.round(item.UserData.PlaybackPositionTicks / 10000000) : 0,
+        playbackPosition: item.UserData?.PlaybackPositionTicks
+          ? Math.round(item.UserData.PlaybackPositionTicks / 10000000)
+          : 0,
         rating: item.CommunityRating,
-        criticRating: item.CriticRating,
         dateAdded: item.DateCreated,
-        seriesName: item.SeriesName, // For episodes
-        seasonNumber: item.ParentIndexNumber, // For episodes
-        episodeNumber: item.IndexNumber // For episodes
+        seriesName: item.SeriesName,
+        seasonNumber: item.ParentIndexNumber,
+        episodeNumber: item.IndexNumber
       };
     });
 
     res.json({
       items,
       totalCount: response.data.TotalRecordCount,
-      page: parseInt(page),
-      limit: parseInt(limit),
-      totalPages: Math.ceil(response.data.TotalRecordCount / parseInt(limit)),
+      page: pageNum,
+      limit: limitNum,
+      totalPages: Math.ceil(response.data.TotalRecordCount / limitNum),
       libraryId,
       filters: {
         search: search || null,
@@ -154,7 +132,7 @@ router.get('/:libraryId/items', ensureAuth, async (req, res) => {
 
   } catch (error) {
     console.error('Library items error:', error.message);
-    res.status(500).json({ 
+    res.status(500).json({
       error: 'Failed to load library items',
       details: error.response?.data?.message || error.message
     });
@@ -171,30 +149,28 @@ router.get('/:libraryId/stats', ensureAuth, async (req, res) => {
     const auth = await getAuthData();
     const axios = await getAuthenticatedAxios();
 
-    // Get total counts by type
     const [moviesResp, seriesResp, episodesResp] = await Promise.allSettled([
       axios.get(`/Users/${auth.userId}/Items`, {
-        params: { ParentId: libraryId, IncludeItemTypes: 'Movie', Recursive: true, Limit: 1 }
+        params: { ParentId: libraryId, IncludeItemTypes: 'Movie', Recursive: true, Limit: 0 }
       }),
       axios.get(`/Users/${auth.userId}/Items`, {
-        params: { ParentId: libraryId, IncludeItemTypes: 'Series', Recursive: true, Limit: 1 }
+        params: { ParentId: libraryId, IncludeItemTypes: 'Series', Recursive: true, Limit: 0 }
       }),
       axios.get(`/Users/${auth.userId}/Items`, {
-        params: { ParentId: libraryId, IncludeItemTypes: 'Episode', Recursive: true, Limit: 1 }
+        params: { ParentId: libraryId, IncludeItemTypes: 'Episode', Recursive: true, Limit: 0 }
       })
     ]);
 
-    const stats = {
+    res.json({
       movies: moviesResp.status === 'fulfilled' ? moviesResp.value.data.TotalRecordCount : 0,
       series: seriesResp.status === 'fulfilled' ? seriesResp.value.data.TotalRecordCount : 0,
       episodes: episodesResp.status === 'fulfilled' ? episodesResp.value.data.TotalRecordCount : 0,
       libraryId
-    };
+    });
 
-    res.json(stats);
   } catch (error) {
     console.error('Library stats error:', error.message);
-    res.status(500).json({ 
+    res.status(500).json({
       error: 'Failed to load library statistics',
       details: error.response?.data?.message || error.message
     });

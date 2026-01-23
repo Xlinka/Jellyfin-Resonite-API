@@ -4,8 +4,10 @@ class AdminDashboard {
         this.refreshInterval = null;
         this.isLoading = false;
         this.currentVideo = null;
-        this.hls = null;
+        this.currentStreamMeta = null;
+        this.activeStreams = [];
         this.videos = [];
+        this.REFRESH_RATE = 10000; // 10 seconds
         this.init();
     }
 
@@ -13,32 +15,22 @@ class AdminDashboard {
         this.showLoading();
         this.loadData();
         this.startAutoRefresh();
-        
-        // Event listeners
-        window.addEventListener('beforeunload', () => {
-            this.stopAutoRefresh();
-        });
+        window.addEventListener('beforeunload', () => this.stopAutoRefresh());
     }
 
     async loadData() {
         if (this.isLoading) return;
-        
         this.isLoading = true;
-        
+
         try {
             const response = await fetch('/admin/stats');
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-            }
-            
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
             const data = await response.json();
             this.updateUI(data);
             this.updateStatus('online');
-            
         } catch (error) {
             console.error('Failed to load admin data:', error);
             this.updateStatus('offline');
-            this.showError(error.message);
         } finally {
             this.isLoading = false;
             this.hideLoading();
@@ -46,166 +38,111 @@ class AdminDashboard {
     }
 
     updateUI(data) {
-        // Update server stats
         this.updateElement('uptime', data.server.uptimeFormatted);
         this.updateElement('startTime', this.formatDate(data.server.startTime));
         this.updateElement('totalRequests', this.formatNumber(data.server.requestCount));
         this.updateElement('requestsPerHour', this.formatNumber(data.server.requestsPerHour));
         this.updateElement('apiVersion', data.server.version);
         this.updateElement('serverStart', this.formatDate(data.server.startTime));
-
-        // Update streaming stats
         this.updateElement('activeStreams', data.streaming.activeStreams);
         this.updateElement('totalStreams', data.streaming.totalStreams);
         this.updateElement('bandwidth', data.streaming.bandwidthFormatted);
-
-        // Update Jellyfin status
         this.updateJellyfinStatus(data.jellyfin);
-
-        // Update API performance stats
         this.updateAPIStats(data.api);
-
-        // Update active streams list
-        this.updateActiveStreams(data.activeStreams);
-
-        // Update last updated time
+        this.activeStreams = data.activeStreams || [];
+        this.updateActiveStreams(this.activeStreams);
+        this.updateCurrentVideoStats();
         this.updateElement('lastUpdated', this.formatTime(new Date()));
     }
 
-    updateJellyfinStatus(jellyfinData) {
-        // Update header status indicator
+    updateJellyfinStatus(jf) {
         const headerStatus = document.getElementById('jellyfinStatus');
         if (headerStatus) {
-            const statusClass = jellyfinData.connected ? 'jellyfin-connected' : 'jellyfin-disconnected';
-            const statusText = jellyfinData.connected ? 'Connected' : 'Disconnected';
-            
+            const statusClass = jf.connected ? 'jellyfin-connected' : 'jellyfin-disconnected';
             headerStatus.className = `status-indicator ${statusClass}`;
-            headerStatus.innerHTML = `
-                <span class="status-dot"></span>
-                <span>Jellyfin: ${statusText}</span>
-            `;
+            headerStatus.innerHTML = `<span class="status-dot"></span><span>Jellyfin: ${jf.connected ? 'Connected' : 'Disconnected'}</span>`;
         }
 
-        // Update Jellyfin status card
-        this.updateElement('jellyfinConnected', jellyfinData.connected ? 'Connected' : 'Disconnected');
-        
-        if (jellyfinData.connected) {
-            this.updateElement('jellyfinVersion', `v${jellyfinData.version}`);
-            this.updateElement('jellyfinServer', jellyfinData.server || 'Unknown');
-            this.updateElement('jellyfinVersionSystem', jellyfinData.version || 'Unknown');
-        } else {
-            this.updateElement('jellyfinVersion', jellyfinData.error || 'Connection failed');
-            this.updateElement('jellyfinServer', jellyfinData.server || 'Not configured');
-            this.updateElement('jellyfinVersionSystem', 'N/A');
-        }
+        this.updateElement('jellyfinConnected', jf.connected ? 'Connected' : 'Disconnected');
+        this.updateElement('jellyfinVersion', jf.connected ? `v${jf.version}` : jf.error || 'Connection failed');
+        this.updateElement('jellyfinServer', jf.server || 'Not configured');
+        this.updateElement('jellyfinVersionSystem', jf.connected ? jf.version : 'N/A');
     }
 
     updateAPIStats(apiData) {
         const container = document.getElementById('apiStats');
         if (!container) return;
 
-        container.innerHTML = '';
-
-        Object.entries(apiData).forEach(([endpoint, stats]) => {
-            const item = document.createElement('div');
-            item.className = 'api-stat-item';
-            
-            const endpointName = this.getEndpointName(endpoint);
-            const responseTime = stats.avgResponse || 0;
-            const responseColor = this.getResponseTimeColor(responseTime);
-            
-            item.innerHTML = `
-                <div class="api-stat-info">
-                    <h4>${endpointName}</h4>
-                    <span>${endpoint}</span>
-                </div>
-                <div class="api-stat-values">
-                    <div class="api-stat-count">${this.formatNumber(stats.count)}</div>
-                    <div class="api-stat-response" style="color: ${responseColor}">
-                        ${responseTime}ms avg
+        container.innerHTML = Object.entries(apiData).map(([endpoint, stats]) => {
+            const name = this.getEndpointName(endpoint);
+            const color = this.getResponseTimeColor(stats.avgResponse || 0);
+            return `
+                <div class="api-stat-item">
+                    <div class="api-stat-info">
+                        <h4>${name}</h4>
+                        <span>${endpoint}</span>
+                    </div>
+                    <div class="api-stat-values">
+                        <div class="api-stat-count">${this.formatNumber(stats.count)}</div>
+                        <div class="api-stat-response" style="color:${color}">${stats.avgResponse || 0}ms avg</div>
                     </div>
                 </div>
             `;
-            
-            container.appendChild(item);
-        });
+        }).join('');
     }
 
     updateActiveStreams(streams) {
         const container = document.getElementById('activeStreamsList');
         if (!container) return;
 
-        if (!streams || streams.length === 0) {
+        if (!streams?.length) {
             container.innerHTML = '<div class="no-streams">No active streams</div>';
             return;
         }
 
-        container.innerHTML = '';
-
-        streams.forEach(stream => {
-            const item = document.createElement('div');
-            item.className = 'stream-item';
-            
+        container.innerHTML = streams.map(stream => {
             const duration = this.formatDuration(Date.now() - stream.startTime);
-            const bitrate = this.formatBitrate(stream.bitrate);
-            
-            item.innerHTML = `
-                <div class="stream-info">
-                    <h4>Stream ${stream.sessionId.split('-')[1]}</h4>
-                    <div class="stream-details">
-                        <span>Duration: ${duration}</span>
-                        <span>Bitrate: ${bitrate}</span>
-                        <span>Item: ${stream.itemId.substring(0, 8)}...</span>
+            const transcodeSummary = this.formatTranscodeSummary(stream);
+            return `
+                <div class="stream-item">
+                    <div class="stream-info">
+                        <h4>Stream ${stream.sessionId.split('-')[1]}</h4>
+                        <div class="stream-details">
+                            <span>Duration: ${duration}</span>
+                            <span>Bitrate: ${this.formatBitrate(stream.bitrate)}</span>
+                            <span>Item: ${stream.itemId.substring(0, 8)}...</span>
+                            <span>${transcodeSummary}</span>
+                        </div>
                     </div>
+                    <div class="stream-quality">${(stream.quality || 'auto').toUpperCase()}</div>
                 </div>
-                <div class="stream-quality">${stream.quality.toUpperCase()}</div>
             `;
-            
-            container.appendChild(item);
-        });
+        }).join('');
     }
 
     updateStatus(status) {
-        const statusElement = document.getElementById('status');
-        if (!statusElement) return;
-
-        statusElement.className = `status-indicator ${status}`;
-        statusElement.innerHTML = `
-            <span class="status-dot"></span>
-            <span>${status.charAt(0).toUpperCase() + status.slice(1)}</span>
-        `;
+        const el = document.getElementById('status');
+        if (el) {
+            el.className = `status-indicator ${status}`;
+            el.innerHTML = `<span class="status-dot"></span><span>${status.charAt(0).toUpperCase() + status.slice(1)}</span>`;
+        }
     }
 
     updateElement(id, value) {
-        const element = document.getElementById(id);
-        if (element) {
-            element.textContent = value;
-        }
+        const el = document.getElementById(id);
+        if (el) el.textContent = value;
     }
 
     showLoading() {
-        const overlay = document.getElementById('loadingOverlay');
-        if (overlay) {
-            overlay.classList.remove('hidden');
-        }
+        document.getElementById('loadingOverlay')?.classList.remove('hidden');
     }
 
     hideLoading() {
-        const overlay = document.getElementById('loadingOverlay');
-        if (overlay) {
-            overlay.classList.add('hidden');
-        }
-    }
-
-    showError(message) {
-        // Could implement a toast notification here
-        console.error('Dashboard Error:', message);
+        document.getElementById('loadingOverlay')?.classList.add('hidden');
     }
 
     startAutoRefresh() {
-        this.refreshInterval = setInterval(() => {
-            this.loadData();
-        }, 5000); // Refresh every 5 seconds
+        this.refreshInterval = setInterval(() => this.loadData(), this.REFRESH_RATE);
     }
 
     stopAutoRefresh() {
@@ -215,314 +152,250 @@ class AdminDashboard {
         }
     }
 
-    // API Testing Functions
-    async testEndpoint(endpointName) {
-        const testElement = document.getElementById(`test-${endpointName}`);
-        const statusElement = testElement.querySelector('.test-status');
-        
-        // Update status to testing
-        statusElement.className = 'test-status testing';
-        statusElement.textContent = 'Testing...';
-        
-        // Clear previous results
-        const existingData = testElement.querySelector('.test-data');
-        if (existingData) {
-            existingData.remove();
-        }
+    // API Testing
+    async testEndpoint(name) {
+        const testEl = document.getElementById(`test-${name}`);
+        const statusEl = testEl?.querySelector('.test-status');
+        if (!statusEl) return;
+
+        statusEl.className = 'test-status testing';
+        statusEl.textContent = 'Testing...';
+        testEl.querySelector('.test-data')?.remove();
 
         try {
-            const response = await fetch(`/admin/test/${endpointName}`);
+            const response = await fetch(`/admin/test/${name}`);
             const data = await response.json();
-            
+
             if (data.success) {
-                statusElement.className = 'test-status success';
-                statusElement.textContent = 'Success';
-                
-                // Add result data
+                statusEl.className = 'test-status success';
+                statusEl.textContent = 'Success';
                 const dataDiv = document.createElement('div');
                 dataDiv.className = 'test-data';
-                dataDiv.innerHTML = `Found ${data.count || 0} items`;
-                testElement.appendChild(dataDiv);
-                
-                this.logTestResult(`✓ ${endpointName}: Success (${data.count || 0} items)`, 'success');
-                
-                if (data.data && data.data.length > 0) {
-                    this.logTestResult(`  Sample: ${data.data[0].name || 'Unknown'}`, 'info');
-                }
+                dataDiv.textContent = `Found ${data.count || 0} items`;
+                testEl.appendChild(dataDiv);
+                this.logTestResult(`[OK] ${name}: Success (${data.count || 0} items)`, 'success');
             } else {
                 throw new Error(data.error || 'Test failed');
             }
         } catch (error) {
-            statusElement.className = 'test-status error';
-            statusElement.textContent = 'Error';
-            
+            statusEl.className = 'test-status error';
+            statusEl.textContent = 'Error';
             const dataDiv = document.createElement('div');
             dataDiv.className = 'test-data';
-            dataDiv.innerHTML = error.message;
-            testElement.appendChild(dataDiv);
-            
-            this.logTestResult(`✗ ${endpointName}: ${error.message}`, 'error');
+            dataDiv.textContent = error.message;
+            testEl.appendChild(dataDiv);
+            this.logTestResult(`[FAIL] ${name}: ${error.message}`, 'error');
         }
     }
 
-    // Video Testing Functions
+    // Video Testing
     async loadVideoList() {
         try {
             const response = await fetch('/admin/test/videos');
             const data = await response.json();
-            
             if (data.success) {
                 this.videos = data.data;
                 this.displayVideoList();
-                this.logTestResult(`✓ Videos: Loaded ${data.count} streamable videos`, 'success');
+                this.logTestResult(`[OK] Videos: Loaded ${data.count} videos`, 'success');
             } else {
-                throw new Error(data.error || 'Failed to load videos');
+                throw new Error(data.error);
             }
         } catch (error) {
-            this.logTestResult(`✗ Videos: ${error.message}`, 'error');
-            console.error('Failed to load videos:', error);
+            this.logTestResult(`[FAIL] Videos: ${error.message}`, 'error');
         }
     }
 
     displayVideoList() {
-        const videoList = document.getElementById('videoList');
-        if (!videoList) return;
+        const list = document.getElementById('videoList');
+        if (!list) return;
 
-        if (this.videos.length === 0) {
-            videoList.innerHTML = '<p class="no-videos">No streamable videos found...</p>';
+        if (!this.videos.length) {
+            list.innerHTML = '<p class="no-videos">No streamable videos found...</p>';
             return;
         }
 
-        videoList.innerHTML = '';
-
-        this.videos.forEach(video => {
-            const videoItem = document.createElement('div');
-            videoItem.className = 'video-item';
-            videoItem.onclick = () => this.selectVideo(video);
-            
-            const displayName = video.seriesName ? 
-                `${video.seriesName} - S${video.seasonNumber}E${video.episodeNumber} - ${video.name}` : 
-                video.name;
-            
-            videoItem.innerHTML = `
-                <div class="video-thumbnail">
-                    ${video.thumbnail ? 
-                        `<img src="${video.thumbnail}" alt="${video.name}" onerror="this.parentElement.innerHTML='<div class=\\'video-placeholder\\'>📺</div>'">` :
-                        '<div class="video-placeholder">📺</div>'
-                    }
-                </div>
-                <div class="video-details">
-                    <h5>${displayName}</h5>
-                    <div class="video-meta">
-                        ${video.type} • ${video.year || 'Unknown'} • ${this.formatDuration(video.duration * 1000)}
-                        ${video.resolution ? ` • ${video.resolution}p` : ''}
+        list.innerHTML = this.videos.map((v, i) => {
+            const name = v.seriesName ? `${v.seriesName} - S${v.seasonNumber}E${v.episodeNumber} - ${v.name}` : v.name;
+            return `
+                <div class="video-item" data-index="${i}">
+                    <div class="video-thumbnail">
+                        ${v.thumbnail ? `<img src="${v.thumbnail}" alt="" onerror="this.parentElement.innerHTML='<div class=\\'video-placeholder\\'><i class=\\'fas fa-film\\'></i></div>'">` : '<div class="video-placeholder"><i class="fas fa-film"></i></div>'}
+                    </div>
+                    <div class="video-details">
+                        <h5>${name}</h5>
+                        <div class="video-meta">${v.type} | ${v.year || 'N/A'} | ${this.formatDuration(v.duration * 1000)}${v.resolution ? ` | ${v.resolution}p` : ''}</div>
                     </div>
                 </div>
             `;
-            
-            videoList.appendChild(videoItem);
+        }).join('');
+
+        list.querySelectorAll('.video-item').forEach(item => {
+            item.addEventListener('click', () => this.selectVideo(parseInt(item.dataset.index)));
         });
     }
 
-    async selectVideo(video) {
-        // Update selection in UI
-        document.querySelectorAll('.video-item').forEach(item => {
-            item.classList.remove('selected');
-        });
-        event.currentTarget.classList.add('selected');
-        
-        this.currentVideo = video;
-        
-        // Play video with current quality setting
+    selectVideo(index) {
+        document.querySelectorAll('.video-item').forEach(el => el.classList.remove('selected'));
+        document.querySelector(`.video-item[data-index="${index}"]`)?.classList.add('selected');
+        this.currentVideo = this.videos[index];
         this.playVideoWithQuality();
     }
 
     async playVideoWithQuality() {
         if (!this.currentVideo) return;
-
-        const qualitySelect = document.getElementById('qualitySelect');
-        const quality = qualitySelect ? qualitySelect.value : 'auto';
+        const quality = document.getElementById('qualitySelect')?.value || 'auto';
 
         try {
-            // Get stream URL with quality parameter
             const response = await fetch(`/admin/test/stream/${this.currentVideo.id}?quality=${quality}`);
             const data = await response.json();
-            
             if (data.success) {
+                this.currentStreamMeta = data.data;
                 this.playVideo(data.data);
-                this.updateVideoInfo(data.data);
-                this.logTestResult(`✓ Stream: ${this.currentVideo.name} - Quality: ${quality}`, 'success');
+                this.updateVideoInfo(data.data, this.getTranscodeInfoForItem(this.currentVideo.id));
+                this.logTestResult(`[PLAY] ${this.currentVideo.name} - Quality: ${quality}`, 'success');
             } else {
-                throw new Error(data.error || 'Failed to get stream URL');
+                throw new Error(data.error);
             }
         } catch (error) {
-            this.logTestResult(`✗ Stream: ${error.message}`, 'error');
-            console.error('Failed to get stream URL:', error);
+            this.logTestResult(`[FAIL] Stream: ${error.message}`, 'error');
         }
     }
 
-    playVideo(streamData) {
+    playVideo() {
         const video = document.getElementById('videoPlayer');
-        if (!video) return;
-
-        // Stop existing stream
-        this.clearPlayer();
-
-        // Use direct playback with our proxied stream
-        this.logTestResult(`▶ Playing ${streamData.name} via direct stream`, 'info');
-        this.playDirectVideo();
-    }
-
-    playDirectVideo() {
-        const video = document.getElementById('videoPlayer');
-        if (!video) return;
-        
-        const itemId = this.currentVideo?.id;
-        if (itemId) {
-            // Get selected quality from UI
-            const qualitySelect = document.getElementById('qualitySelect');
-            const quality = qualitySelect ? qualitySelect.value : 'auto';
-            
-            const proxiedUrl = `/api/stream/${itemId}?format=direct&quality=${quality}`;
-            video.src = proxiedUrl;
-            
-            if (quality === 'auto') {
-                this.logTestResult(`▶ Playing via direct stream (auto quality)`, 'info');
-            } else {
-                this.logTestResult(`▶ Playing via transcoded stream (${quality} quality)`, 'info');
-            }
-        }
+        if (!video || !this.currentVideo) return;
+        const quality = document.getElementById('qualitySelect')?.value || 'auto';
+        video.src = `/api/stream/${this.currentVideo.id}?format=direct&quality=${quality}&client=browser`;
+        video.load();
+        video.play().catch(() => {});
+        this.logTestResult(`[STREAM] Playing via ${quality === 'auto' ? 'direct' : 'transcoded'} stream`, 'info');
     }
 
     clearPlayer() {
         const video = document.getElementById('videoPlayer');
-        if (!video) return;
-
-        // Stop HLS if active
-        if (this.hls) {
-            this.hls.destroy();
-            this.hls = null;
+        if (video) {
+            video.src = '';
+            video.load();
         }
-
-        // Clear video source
-        video.src = '';
-        video.load();
-
-        // Clear video info
         this.updateVideoInfo(null);
-        
-        // Clear selection
-        document.querySelectorAll('.video-item').forEach(item => {
-            item.classList.remove('selected');
-        });
-
-        this.logTestResult('⏹ Video player stopped', 'info');
+        document.querySelectorAll('.video-item').forEach(el => el.classList.remove('selected'));
+        this.currentVideo = null;
+        this.currentStreamMeta = null;
+        this.logTestResult('[STOP] Video player stopped', 'info');
     }
 
-    updateVideoInfo(streamData) {
-        const videoInfo = document.getElementById('videoInfo');
-        if (!videoInfo) return;
+    updateVideoInfo(data, transcode) {
+        const info = document.getElementById('videoInfo');
+        if (!info) return;
 
-        if (!streamData) {
-            videoInfo.className = 'video-info';
-            videoInfo.innerHTML = '<p>Select a video from the list to start testing stream playback...</p>';
+        if (!data) {
+            info.className = 'video-info';
+            info.innerHTML = '<p>Select a video from the list to start testing stream playback...</p>';
             return;
         }
 
-        videoInfo.className = 'video-info active';
-        videoInfo.innerHTML = `
-            <div class="info-item">
-                <span class="info-label">Video:</span>
-                <span class="info-value">${streamData.name}</span>
-            </div>
-            <div class="info-item">
-                <span class="info-label">Type:</span>
-                <span class="info-value">${streamData.type}</span>
-            </div>
-            <div class="info-item">
-                <span class="info-label">Duration:</span>
-                <span class="info-value">${this.formatDuration(streamData.duration * 1000)}</span>
-            </div>
-            <div class="info-item">
-                <span class="info-label">Resolution:</span>
-                <span class="info-value">${streamData.resolution}p</span>
-            </div>
-            <div class="info-item">
-                <span class="info-label">Codec:</span>
-                <span class="info-value">${streamData.codec}</span>
-            </div>
-            <div class="info-item">
-                <span class="info-label">Bitrate:</span>
-                <span class="info-value">${this.formatBitrate(streamData.bitrate)}</span>
-            </div>
-            <div class="info-item">
-                <span class="info-label">Stream URL:</span>
-                <span class="info-value" style="font-size: 0.75em; word-break: break-all;">${streamData.streamUrl}</span>
-            </div>
+        const transcodeHtml = transcode ? this.renderTranscodeInfo(transcode) : '';
+        info.className = 'video-info active';
+        info.innerHTML = `
+            <div class="info-item"><span class="info-label">Video:</span><span class="info-value">${data.name}</span></div>
+            <div class="info-item"><span class="info-label">Type:</span><span class="info-value">${data.type}</span></div>
+            <div class="info-item"><span class="info-label">Duration:</span><span class="info-value">${this.formatDuration(data.duration * 1000)}</span></div>
+            <div class="info-item"><span class="info-label">Resolution:</span><span class="info-value">${data.resolution}p</span></div>
+            <div class="info-item"><span class="info-label">Codec:</span><span class="info-value">${data.codec}</span></div>
+            <div class="info-item"><span class="info-label">Bitrate:</span><span class="info-value">${this.formatBitrate(data.bitrate)}</span></div>
+            ${transcodeHtml}
         `;
     }
 
     logTestResult(message, type = 'info') {
-        const testLog = document.getElementById('testLog');
-        if (!testLog) return;
-
-        const timestamp = new Date().toLocaleTimeString();
-        const logEntry = document.createElement('p');
-        logEntry.className = type;
-        logEntry.textContent = `[${timestamp}] ${message}`;
-        
-        testLog.appendChild(logEntry);
-        testLog.scrollTop = testLog.scrollHeight;
+        const log = document.getElementById('testLog');
+        if (!log) return;
+        const entry = document.createElement('p');
+        entry.className = type;
+        entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+        log.appendChild(entry);
+        log.scrollTop = log.scrollHeight;
     }
 
-    // Utility functions
+    // Utilities
     formatNumber(num) {
         if (typeof num !== 'number') return '0';
-        
-        if (num >= 1000000) {
-            return (num / 1000000).toFixed(1) + 'M';
-        } else if (num >= 1000) {
-            return (num / 1000).toFixed(1) + 'K';
-        }
+        if (num >= 1000000) return (num / 1000000).toFixed(1) + 'M';
+        if (num >= 1000) return (num / 1000).toFixed(1) + 'K';
         return num.toString();
     }
 
     formatDate(dateString) {
         try {
-            const date = new Date(dateString);
-            return date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
-        } catch (e) {
-            return 'Invalid Date';
-        }
+            const d = new Date(dateString);
+            return d.toLocaleDateString() + ' ' + d.toLocaleTimeString();
+        } catch { return 'Invalid Date'; }
     }
 
     formatTime(date) {
         return date.toLocaleTimeString();
     }
 
-    formatDuration(milliseconds) {
-        const seconds = Math.floor(milliseconds / 1000);
-        const minutes = Math.floor(seconds / 60);
-        const hours = Math.floor(minutes / 60);
-
-        if (hours > 0) {
-            return `${hours}h ${minutes % 60}m`;
-        } else if (minutes > 0) {
-            return `${minutes}m ${seconds % 60}s`;
-        } else {
-            return `${seconds}s`;
-        }
+    formatDuration(ms) {
+        const s = Math.floor(ms / 1000);
+        const m = Math.floor(s / 60);
+        const h = Math.floor(m / 60);
+        if (h > 0) return `${h}h ${m % 60}m`;
+        if (m > 0) return `${m}m ${s % 60}s`;
+        return `${s}s`;
     }
 
     formatBitrate(bitrate) {
-        if (!bitrate || bitrate === 0) return 'Unknown';
-        
-        if (bitrate >= 1000000) {
-            return (bitrate / 1000000).toFixed(1) + ' Mbps';
-        } else if (bitrate >= 1000) {
-            return (bitrate / 1000).toFixed(0) + ' Kbps';
-        }
+        if (!bitrate) return 'Unknown';
+        if (bitrate >= 1000000) return (bitrate / 1000000).toFixed(1) + ' Mbps';
+        if (bitrate >= 1000) return Math.round(bitrate / 1000) + ' Kbps';
         return bitrate + ' bps';
+    }
+
+    formatTranscodeSummary(stream) {
+        const transcode = stream?.transcoding;
+        if (!transcode) {
+            return stream?.isDirectPlay ? 'Direct play' : 'Direct stream';
+        }
+        const progress = transcode.completionPercent !== null && transcode.completionPercent !== undefined
+            ? `${transcode.completionPercent}%`
+            : 'Active';
+        const size = transcode.width && transcode.height ? `${transcode.width}x${transcode.height}` : null;
+        const codecs = [transcode.videoCodec, transcode.audioCodec].filter(Boolean).join('/');
+        const bitrate = transcode.bitrate ? this.formatBitrate(transcode.bitrate) : null;
+        const parts = [progress, size, codecs, bitrate].filter(Boolean);
+        return `Transcode: ${parts.join(' | ')}`;
+    }
+
+    getTranscodeInfoForItem(itemId) {
+        if (!itemId || !this.activeStreams?.length) return null;
+        const stream = this.activeStreams.find(s => s.itemId === itemId);
+        return stream?.transcoding || null;
+    }
+
+    updateCurrentVideoStats() {
+        if (!this.currentVideo || !this.currentStreamMeta) return;
+        const transcode = this.getTranscodeInfoForItem(this.currentVideo.id);
+        this.updateVideoInfo(this.currentStreamMeta, transcode);
+    }
+
+    renderTranscodeInfo(transcode) {
+        const progress = transcode.completionPercent !== null && transcode.completionPercent !== undefined
+            ? `${transcode.completionPercent}%`
+            : (transcode.isTranscoding ? 'Active' : 'Direct');
+        const size = transcode.width && transcode.height ? `${transcode.width}x${transcode.height}` : 'Unknown';
+        const codecs = [transcode.videoCodec, transcode.audioCodec].filter(Boolean).join('/');
+        const bitrate = transcode.bitrate ? this.formatBitrate(transcode.bitrate) : 'Unknown';
+        const framerate = transcode.framerate ? `${transcode.framerate} fps` : 'Unknown';
+        const reasons = transcode.reasons?.length ? transcode.reasons.join(', ') : 'N/A';
+        return `
+            <div class="info-heading">Transcode</div>
+            <div class="info-item"><span class="info-label">Progress:</span><span class="info-value">${progress}</span></div>
+            <div class="info-item"><span class="info-label">Output:</span><span class="info-value">${size}${codecs ? ` ${codecs}` : ''}</span></div>
+            <div class="info-item"><span class="info-label">Bitrate:</span><span class="info-value">${bitrate}</span></div>
+            <div class="info-item"><span class="info-label">Framerate:</span><span class="info-value">${framerate}</span></div>
+            <div class="info-item"><span class="info-label">Reasons:</span><span class="info-value">${reasons}</span></div>
+        `;
     }
 
     getEndpointName(endpoint) {
@@ -536,85 +409,67 @@ class AdminDashboard {
         return names[endpoint] || endpoint;
     }
 
-    getResponseTimeColor(responseTime) {
-        if (responseTime <= 100) return '#10b981'; // green
-        if (responseTime <= 500) return '#f59e0b'; // yellow
-        return '#ef4444'; // red
+    getResponseTimeColor(ms) {
+        if (ms <= 100) return '#10b981';
+        if (ms <= 500) return '#f59e0b';
+        return '#ef4444';
     }
 }
 
-// Global functions for buttons
+// Global functions
 function refreshData() {
-    if (window.dashboard) {
-        const btn = document.querySelector('.refresh-btn i');
-        if (btn) {
-            btn.classList.add('fa-spin');
-            setTimeout(() => btn.classList.remove('fa-spin'), 1000);
-        }
-        window.dashboard.loadData();
+    if (!window.dashboard) return;
+    const btn = document.querySelector('.refresh-btn i');
+    if (btn) {
+        btn.classList.add('fa-spin');
+        setTimeout(() => btn.classList.remove('fa-spin'), 1000);
     }
+    window.dashboard.loadData();
 }
 
-function testEndpoint(endpointName) {
-    if (window.dashboard) {
-        window.dashboard.testEndpoint(endpointName);
-    }
+function testEndpoint(name) {
+    window.dashboard?.testEndpoint(name);
 }
 
 async function testAllEndpoints() {
-    if (window.dashboard) {
-        const endpoints = ['libraries', 'recent', 'search', 'system', 'videos'];
-        
-        // Clear test log
-        const testLog = document.getElementById('testLog');
-        if (testLog) {
-            testLog.innerHTML = '<p>Starting API tests...</p>';
-        }
-        
-        window.dashboard.logTestResult('Running all API tests...', 'info');
-        
-        for (const endpoint of endpoints) {
-            await window.dashboard.testEndpoint(endpoint);
-            // Small delay between tests
-            await new Promise(resolve => setTimeout(resolve, 500));
-        }
-        
-        window.dashboard.logTestResult('All tests completed!', 'info');
+    if (!window.dashboard) return;
+    const log = document.getElementById('testLog');
+    if (log) log.innerHTML = '<p>Starting API tests...</p>';
+
+    window.dashboard.logTestResult('Running all API tests...', 'info');
+    for (const ep of ['libraries', 'recent', 'search', 'system', 'videos']) {
+        await window.dashboard.testEndpoint(ep);
+        await new Promise(r => setTimeout(r, 300));
     }
+    window.dashboard.logTestResult('All tests completed!', 'info');
 }
 
-// Video testing functions
 function loadVideoList() {
-    if (window.dashboard) {
-        window.dashboard.loadVideoList();
-    }
+    window.dashboard?.loadVideoList();
 }
 
 function clearPlayer() {
-    if (window.dashboard) {
-        window.dashboard.clearPlayer();
-    }
+    window.dashboard?.clearPlayer();
 }
 
 function changeVideoQuality() {
-    if (window.dashboard && window.dashboard.currentVideo) {
+    if (window.dashboard?.currentVideo) {
         window.dashboard.playVideoWithQuality();
     }
 }
 
-// Initialize dashboard when page loads
+// Initialize
 document.addEventListener('DOMContentLoaded', () => {
     window.dashboard = new AdminDashboard();
 });
 
-// Handle visibility change to pause/resume updates
+// Pause updates when tab is hidden
 document.addEventListener('visibilitychange', () => {
-    if (window.dashboard) {
-        if (document.hidden) {
-            window.dashboard.stopAutoRefresh();
-        } else {
-            window.dashboard.startAutoRefresh();
-            window.dashboard.loadData(); // Immediate refresh when tab becomes visible
-        }
+    if (!window.dashboard) return;
+    if (document.hidden) {
+        window.dashboard.stopAutoRefresh();
+    } else {
+        window.dashboard.startAutoRefresh();
+        window.dashboard.loadData();
     }
 });
